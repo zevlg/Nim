@@ -949,7 +949,7 @@ else:
 
     PDispatcher* = ref object of PDispatcherBase
       selector: Selector
-  {.deprecated: [TAsyncFD: AsyncFD, TCallback: Callback].}
+  {.deprecated: [TAsyncFD: AsyncFD].}
 
   proc `==`*(x, y: AsyncFD): bool {.borrow.}
 

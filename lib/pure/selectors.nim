@@ -22,10 +22,21 @@ else:
 
 const MultiThreaded = defined(useStdlibThreading)
 
+type
+  Event* = enum
+    EvRead, EvWrite, EvError
+  AsyncFD* = distinct cint
+
 when MultiThreaded:
   import sharedtables
 
-  type SelectorData = pointer
+  type
+    SelectorData* = object
+      fd*: AsyncFD
+      requestedAction*: Event
+      env*: ForeignCell # we split the closure into its parts for GC-safety
+      procPtr*: proc (fd: AsyncFD): bool {.cdecl.}
+
 else:
   import tables
 
@@ -35,9 +46,6 @@ proc hash*(x: SocketHandle): Hash {.borrow.}
 proc `$`*(x: SocketHandle): string {.borrow.}
 
 type
-  Event* = enum
-    EvRead, EvWrite, EvError
-
   SelectorKey* = object
     fd*: SocketHandle
     events*: set[Event] ## The events which ``fd`` listens for.
@@ -118,7 +126,7 @@ elif defined(linux):
         # are therefore constantly ready. (leading to 100% CPU usage).
         if epoll_ctl(s.epollFD, EPOLL_CTL_DEL, fd, nil) != 0:
           raiseOSError(osLastError())
-        s.fds.mget(fd).events = events
+        s.fds[fd].events = events
       else:
         var event = createEventStruct(events, fd)
         if s.fds[fd].events == {}:
@@ -129,7 +137,7 @@ elif defined(linux):
         else:
           if epoll_ctl(s.epollFD, EPOLL_CTL_MOD, fd, addr(event)) != 0:
             raiseOSError(osLastError())
-        s.fds.mget(fd).events = events
+        s.fds[fd].events = events
 
   proc unregister*(s: var Selector, fd: SocketHandle) =
     if epoll_ctl(s.epollFD, EPOLL_CTL_DEL, fd, nil) != 0:
@@ -143,9 +151,9 @@ elif defined(linux):
     when MultiThreaded: deinitSharedTable(s.fds)
     if s.epollFD.close() != 0: raiseOSError(osLastError())
 
-  proc epollHasFd(s: Selector, fd: SocketHandle): bool =
+  proc epollHasFd(s: var Selector, fd: SocketHandle): bool =
     result = true
-    var event = createEventStruct(s.fds[fd].events, fd)
+    var event = createEventStruct(s.fds.getOrDefault(fd).events, fd)
     if epoll_ctl(s.epollFD, EPOLL_CTL_MOD, fd, addr(event)) != 0:
       let err = osLastError()
       if err.cint in {ENOENT, EBADF}:
@@ -183,7 +191,7 @@ elif defined(linux):
     else:
       result.fds = initTable[SocketHandle, SelectorKey]()
 
-  proc contains*(s: Selector, fd: SocketHandle): bool =
+  proc contains*(s: var Selector, fd: SocketHandle): bool =
     ## Determines whether selector contains a file descriptor.
     if s.fds.hasKey(fd):
       # Ensure the underlying epoll instance still contains this fd.
@@ -194,7 +202,7 @@ elif defined(linux):
     else:
       return false
 
-  proc `[]`*(s: Selector, fd: SocketHandle): SelectorKey =
+  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorKey =
     ## Retrieves the selector key for ``fd``.
     return s.fds[fd]
 
@@ -223,13 +231,13 @@ elif defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd):
     s.fds[fd] = SelectorKey(fd: fd, events: events, data: data)
 
   proc update*(s: var Selector, fd: SocketHandle, events: set[Event]) =
-    let previousEvents = s.fds[fd].events
+    let previousEvents = s.fds.getOrDefault(fd).events
     if previousEvents != events:
       for event in events-previousEvents:
         modifyKQueue(s.kqFD, fd, event, EV_ADD)
       for event in previousEvents-events:
         modifyKQueue(s.kqFD, fd, event, EV_DELETE)
-      s.fds.mget(fd).events = events
+      s.fds[fd].events = events
 
   proc unregister*(s: var Selector, fd: SocketHandle) =
     for event in s.fds[fd].events:
@@ -272,11 +280,11 @@ elif defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd):
     else:
       result.fds = initTable[SocketHandle, SelectorKey]()
 
-  proc contains*(s: Selector, fd: SocketHandle): bool =
+  proc contains*(s: var Selector, fd: SocketHandle): bool =
     ## Determines whether selector contains a file descriptor.
     s.fds.hasKey(fd) # and s.fds[fd].events != {}
 
-  proc `[]`*(s: Selector, fd: SocketHandle): SelectorKey =
+  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorKey =
     ## Retrieves the selector key for ``fd``.
     return s.fds[fd]
 
@@ -359,20 +367,20 @@ elif not defined(nimdoc):
     else:
       result.fds = initTable[SocketHandle, SelectorKey]()
 
-  proc contains*(s: Selector, fd: SocketHandle): bool =
+  proc contains*(s: var Selector, fd: SocketHandle): bool =
     return s.fds.hasKey(fd)
 
-  proc `[]`*(s: Selector, fd: SocketHandle): SelectorKey =
+  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorKey =
     return s.fds[fd]
 
-proc contains*(s: Selector, key: SelectorKey): bool =
+proc contains*(s: var Selector, key: SelectorKey): bool =
   ## Determines whether selector contains this selector key. More accurate
   ## than checking if the file descriptor is in the selector because it
   ## ensures that the keys are equal. File descriptors may not always be
   ## unique especially when an fd is closed and then a new one is opened,
   ## the new one may have the same value.
   when not defined(nimdoc):
-    return key.fd in s and s.fds[key.fd] == key
+    return s.fds.getOrDefault(key.fd) == key
 
 {.deprecated: [TEvent: Event, PSelectorKey: SelectorKey,
    TReadyInfo: ReadyInfo, PSelector: Selector].}

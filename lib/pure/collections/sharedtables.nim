@@ -45,7 +45,7 @@ template withLock(t, x: untyped) =
   x
   release(t.lock)
 
-proc mget*[A, B](t: var SharedTable[A, B], key: A): var B =
+proc `[]`*[A, B](t: var SharedTable[A, B], key: A): var B =
   ## retrieves the value at ``t[key]``. The value can be modified.
   ## If `key` is not in `t`, the ``KeyError`` exception is raised.
   withLock t:
@@ -58,6 +58,22 @@ proc mget*[A, B](t: var SharedTable[A, B], key: A): var B =
       raise newException(KeyError, "key not found: " & $key)
     else:
       raise newException(KeyError, "key not found")
+
+proc getOrDefault*[A, B](t: var SharedTable[A, B], key: A): B =
+  ## retrieves the value at ``t[key]``. The value cannot be modified.
+  ## If `key` is not in `t`, the default value of ``B`` is returned.
+  withLock t:
+    var hc: Hash
+    var index = rawGet(t, key, hc)
+    let hasKey = index >= 0
+    if hasKey: result = t.data[index].val
+
+proc hasKey*[A, B](t: var SharedTable[A, B], key: A): bool =
+  ## Returns true iff 't' has an entry of the given 'key'.
+  withLock t:
+    var hc: Hash
+    var index = rawGet(t, key, hc)
+    result = index >= 0
 
 proc mgetOrPut*[A, B](t: var SharedTable[A, B], key: A, val: B): var B =
   ## retrieves value at ``t[key]`` or puts ``val`` if not present, either way
