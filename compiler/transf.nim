@@ -383,9 +383,11 @@ proc generateThunk(prc: PNode, dest: PType): PNode =
   # (see internal documentation):
   if gCmd == cmdCompileToJS: return prc
   result = newNodeIT(nkClosure, prc.info, dest)
-  var conv = newNodeIT(nkHiddenStdConv, prc.info, dest)
+  var conv = newNodeIT(nkHiddenSubConv, prc.info, dest)
   conv.add(emptyNode)
   conv.add(prc)
+  if prc.kind == nkClosure:
+    internalError(prc.info, "closure to closure created")
   result.add(conv)
   result.add(newNodeIT(nkNilLit, prc.info, getSysType(tyNil)))
 
@@ -792,7 +794,7 @@ proc transform(c: PTransf, n: PNode): PTransNode =
         result = newTransNode(nkCommentStmt, n.info, 0)
       tryStmt.addSon(deferPart)
       # disable the original 'defer' statement:
-      n.kind = nkCommentStmt
+      n.kind = nkEmpty
   of nkContinueStmt:
     result = PTransNode(newNodeI(nkBreakStmt, n.info))
     var labl = c.contSyms[c.contSyms.high]
