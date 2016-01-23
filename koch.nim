@@ -257,8 +257,8 @@ when defined(withUpdate):
       echo("Git repo found!")
       # use git to download latest source
       echo("Checking for updates...")
-      discard startCmd(git & " fetch origin master")
-      var procs = startCmd(git & " diff origin/master master")
+      discard startCmd(git & " fetch origin devel")
+      var procs = startCmd(git & " diff origin/devel devel")
       var errcode = procs.waitForExit()
       var output = readLine(procs.outputStream)
       echo(output)
@@ -269,7 +269,7 @@ when defined(withUpdate):
           return
         else:
           echo("Fetching updates from repo...")
-          var pullout = execCmdEx(git & " pull origin master")
+          var pullout = execCmdEx(git & " pull origin devel")
           if pullout[1] != 0:
             quit("An error has occurred.")
           else:
@@ -284,11 +284,11 @@ when defined(withUpdate):
       when defined(haveZipLib):
         echo("Falling back.. Downloading source code from repo...")
         # use dom96's httpclient to download zip
-        downloadFile("https://github.com/Araq/Nim/zipball/master",
+        downloadFile("https://github.com/nim-lang/Nim/zipball/master",
                      thisDir / "update.zip")
         try:
           echo("Extracting source code from archive...")
-          var zip: TZipArchive
+          var zip: ZipArchive
           discard open(zip, thisDir & "/update.zip", fmRead)
           extractAll(zip, thisDir & "/")
         except:
