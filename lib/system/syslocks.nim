@@ -9,6 +9,8 @@
 
 ## Low level system locks and condition vars.
 
+{.push stackTrace: off.}
+
 when defined(Windows):
   type
     Handle = int
@@ -104,3 +106,4 @@ else:
   proc deinitSysCond(cond: var SysCond) {.noSideEffect,
     importc: "pthread_cond_destroy", header: "<pthread.h>".}
 
+{.pop.}

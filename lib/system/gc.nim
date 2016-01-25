@@ -39,7 +39,8 @@ when withRealTime and not declared(getTicks):
 when defined(memProfiler):
   proc nimProfile(requestedSize: int) {.benign.}
 
-import sharedlist
+when hasThreadSupport:
+  import sharedlist
 
 const
   rcIncrement = 0b1000 # so that lowest 3 bits are not touched
@@ -95,11 +96,8 @@ type
     stat: GcStat
     when useMarkForDebug or useBackupGc:
       marked: CellSet
-    toDispose: SharedList[pointer]
-
-  ForeignCell* = object
-    data: pointer
-    owner: ptr GcHeap
+    when hasThreadSupport:
+      toDispose: SharedList[pointer]
 
 {.deprecated: [TWalkOp: WalkOp, TFinalizer: Finalizer, TGcHeap: GcHeap,
               TGcStat: GcStat].}
@@ -312,15 +310,8 @@ proc initGC() =
     init(gch.decStack)
     when useMarkForDebug or useBackupGc:
       init(gch.marked)
-    gch.toDispose = initSharedList[pointer]()
-
-proc protect*(x: pointer): ForeignCell =
-  nimGCref(x)
-  result.data = x
-  result.owner = addr(gch)
-
-proc dispose*(x: ForeignCell) =
-  x.owner.toDispose.add(x.data)
+    when hasThreadSupport:
+      gch.toDispose = initSharedList[pointer]()
 
 when useMarkForDebug or useBackupGc:
   type
@@ -763,8 +754,9 @@ proc collectRoots(gch: var GcHeap) =
     collectWhite(s)
 
 proc collectCycles(gch: var GcHeap) =
-  for c in gch.toDispose:
-    nimGCunref(c)
+  when hasThreadSupport:
+    for c in gch.toDispose:
+      nimGCunref(c)
   # ensure the ZCT 'color' is not used:
   while gch.zct.len > 0: discard collectZCT(gch)
   when useBackupGc:
