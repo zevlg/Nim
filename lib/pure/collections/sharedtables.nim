@@ -59,6 +59,16 @@ proc `[]`*[A, B](t: var SharedTable[A, B], key: A): var B =
     else:
       raise newException(KeyError, "key not found")
 
+iterator allValues*[A, B](t: var SharedTable[A, B], key: A): var B =
+  withLock t:
+    let hc = hashNonZero(key)
+    var i = hc and maxHash(t)
+    var j = 0
+    while j < t.dataLen and t.data[i].hcode == hc:
+      if t.data[i].key == key: yield t.data[i].val
+      i = (i + 1) and maxHash(t)
+      inc j
+
 proc getOrDefault*[A, B](t: var SharedTable[A, B], key: A): B =
   ## retrieves the value at ``t[key]``. The value cannot be modified.
   ## If `key` is not in `t`, the default value of ``B`` is returned.
