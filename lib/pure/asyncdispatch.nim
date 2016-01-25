@@ -13,7 +13,7 @@ import os, oids, tables, strutils, macros, times
 
 import nativesockets, net, sharedlist, sharedtables, selectors
 
-export Port, SocketFlag
+export Port, SocketFlag, AsyncFd
 
 #{.injectStmt: newGcInvariant().}
 

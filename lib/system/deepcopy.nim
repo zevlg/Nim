@@ -144,7 +144,7 @@ when hasThreadSupport:
   proc copyClosureEnv*(env: ForeignCell): pointer =
     ## undocumented. Use at your own risk.
     when not declared(usrToCell):
-      {.error: "the currently active GC does not support 'moveClosure'".}
+      {.error: "the currently active GC does not support 'copyClosureEnv'".}
     if isNotForeign(env):
       result = env.data
     else:

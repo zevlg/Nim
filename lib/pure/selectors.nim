@@ -181,9 +181,10 @@ elif defined(linux):
       if (s.events[i].events and EPOLLERR) != 0 or (s.events[i].events and EPOLLHUP) != 0: evSet = evSet + {EvError}
       if (s.events[i].events and EPOLLIN) != 0: evSet = evSet + {EvRead}
       if (s.events[i].events and EPOLLOUT) != 0: evSet = evSet + {EvWrite}
-      let selectorKey = s.fds[fd]
-      assert selectorKey.fd != 0.AsyncFd
-      result.add((selectorKey, evSet))
+      for v in allValues(s.fds, fd):
+        if v.procPtr != nil:
+          assert v.fd != 0.AsyncFd
+          result.add((v, evSet))
 
       #echo("Epoll: ", result[i].key.fd, " ", result[i].events, " ", result[i].key.events)
 
@@ -276,9 +277,12 @@ elif defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd):
       if  (s.events[i].flags and EV_EOF) != 0: evSet = evSet + {EvError}
       if   s.events[i].filter == EVFILT_READ:  evSet = evSet + {EvRead}
       elif s.events[i].filter == EVFILT_WRITE: evSet = evSet + {EvWrite}
-      let selectorKey = s.fds[fd]
-      assert selectorKey.fd != 0.AsyncFd
-      result.add((selectorKey, evSet))
+      for v in allValues(s.fds, fd):
+        if v.procPtr != nil:
+          if v.fd == 0.AsyncFd:
+            echo v.requestedAction, " ", fd
+          assert v.fd != 0.AsyncFd
+          result.add((v, evSet))
 
   proc newSelector*(): Selector =
     result.kqFD = kqueue()
