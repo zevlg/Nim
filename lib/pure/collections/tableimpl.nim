@@ -39,16 +39,24 @@ template rawGetKnownHCImpl() {.dirty.} =
     h = nextTry(h, maxHash(t))
   result = -1 - h                   # < 0 => MISSING; insert idx = -1 - result
 
+const nonZero = 314159265
+
+template hashNonZero(key): untyped =
+  var x = hash(key)
+  if x == 0:
+    x = nonZero
+  x
+
 template rawGetImpl() {.dirty.} =
   hc = hash(key)
   if hc == 0:       # This almost never taken branch should be very predictable.
-    hc = 314159265  # Value doesn't matter; Any non-zero favorite is fine.
+    hc = nonZero  # Value doesn't matter; Any non-zero favorite is fine.
   rawGetKnownHCImpl()
 
 template rawGetDeepImpl() {.dirty.} =   # Search algo for unconditional add
   hc = hash(key)
   if hc == 0:
-    hc = 314159265
+    hc = nonZero
   var h: Hash = hc and maxHash(t)
   while isFilled(t.data[h].hcode):
     h = nextTry(h, maxHash(t))
