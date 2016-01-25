@@ -9,7 +9,7 @@
 
 # TODO: Docs.
 
-import os, unsigned, hashes
+import os, hashes
 
 when defined(linux):
   import posix, epoll
@@ -20,22 +20,28 @@ elif defined(windows):
 else:
   import posix
 
-const MultiThreaded = defined(useStdlibThreading)
+const MultiThreaded = compileOption("threads")
 
 type
   Event* = enum
     EvRead, EvWrite, EvError
   AsyncFD* = distinct cint
 
+proc hash*(x: AsyncFD): Hash {.borrow.}
+proc `==`*(x: AsyncFD, y: AsyncFD): bool {.borrow.}
+
 when MultiThreaded:
   import sharedtables
 
   type
+    SelectorCallback* = proc (fd: AsyncFD; env: pointer): bool {.
+      cdecl, gcsafe.}
     SelectorData* = object
       fd*: AsyncFD
       requestedAction*: Event
       env*: ForeignCell # we split the closure into its parts for GC-safety
-      procPtr*: proc (fd: AsyncFD): bool {.cdecl.}
+      procPtr*: SelectorCallback
+      events*: set[Event] # The events which ``fd`` listens for.
 
 else:
   import tables
@@ -46,12 +52,7 @@ proc hash*(x: SocketHandle): Hash {.borrow.}
 proc `$`*(x: SocketHandle): string {.borrow.}
 
 type
-  SelectorKey* = object
-    fd*: SocketHandle
-    events*: set[Event] ## The events which ``fd`` listens for.
-    data*: SelectorData ## User object.
-
-  ReadyInfo* = tuple[key: SelectorKey, events: set[Event]]
+  ReadyInfo* = tuple[key: SelectorData, events: set[Event]]
 
 when defined(nimdoc):
   type
@@ -95,9 +96,9 @@ elif defined(linux):
       epollFD: cint
       events: array[64, epoll_event]
       when MultiThreaded:
-        fds: SharedTable[SocketHandle, SelectorKey]
+        fds: SharedTable[SocketHandle, SelectorData]
       else:
-        fds: Table[SocketHandle, SelectorKey]
+        fds: Table[SocketHandle, SelectorData]
 
   proc createEventStruct(events: set[Event], fd: SocketHandle): epoll_event =
     if EvRead in events:
@@ -107,37 +108,41 @@ elif defined(linux):
     result.events = result.events or EPOLLRDHUP
     result.data.fd = fd.cint
 
-  proc register*(s: var Selector, fd: SocketHandle, events: set[Event],
+  proc register*(s: var Selector, fd: SocketHandle,
                  data: SelectorData) =
-    var event = createEventStruct(events, fd)
-    if events != {}:
+    var event = createEventStruct(data.events, fd)
+    if data.events != {}:
       if epoll_ctl(s.epollFD, EPOLL_CTL_ADD, fd, addr(event)) != 0:
         raiseOSError(osLastError())
 
-    s.fds[fd] = SelectorKey(fd: fd, events: events, data: data)
+    s.fds[fd] = data
 
   proc update*(s: var Selector, fd: SocketHandle, events: set[Event]) =
-    if s.fds[fd].events != events:
-      if events == {}:
-        # This fd is idle -- it should not be registered to epoll.
-        # But it should remain a part of this selector instance.
-        # This is to prevent epoll_wait from returning immediately
-        # because its got fds which are waiting for no events and
-        # are therefore constantly ready. (leading to 100% CPU usage).
-        if epoll_ctl(s.epollFD, EPOLL_CTL_DEL, fd, nil) != 0:
-          raiseOSError(osLastError())
-        s.fds[fd].events = events
-      else:
-        var event = createEventStruct(events, fd)
-        if s.fds[fd].events == {}:
-          # This fd is idle. It's not a member of this epoll instance and must
-          # be re-registered.
-          if epoll_ctl(s.epollFD, EPOLL_CTL_ADD, fd, addr(event)) != 0:
+    var i = 0
+    for v in allValues(s.fds, fd):
+      let previousEvents = v.events
+      if previousEvents == events: break
+      if i == 0:
+        if events == {}:
+          # This fd is idle -- it should not be registered to epoll.
+          # But it should remain a part of this selector instance.
+          # This is to prevent epoll_wait from returning immediately
+          # because its got fds which are waiting for no events and
+          # are therefore constantly ready. (leading to 100% CPU usage).
+          if epoll_ctl(s.epollFD, EPOLL_CTL_DEL, fd, nil) != 0:
             raiseOSError(osLastError())
         else:
-          if epoll_ctl(s.epollFD, EPOLL_CTL_MOD, fd, addr(event)) != 0:
-            raiseOSError(osLastError())
-        s.fds[fd].events = events
+          var event = createEventStruct(events, fd)
+          if v.events == {}:
+            # This fd is idle. It's not a member of this epoll instance and must
+            # be re-registered.
+            if epoll_ctl(s.epollFD, EPOLL_CTL_ADD, fd, addr(event)) != 0:
+              raiseOSError(osLastError())
+          else:
+            if epoll_ctl(s.epollFD, EPOLL_CTL_MOD, fd, addr(event)) != 0:
+              raiseOSError(osLastError())
+      v.events = events
+      inc i
 
   proc unregister*(s: var Selector, fd: SocketHandle) =
     if epoll_ctl(s.epollFD, EPOLL_CTL_DEL, fd, nil) != 0:
@@ -177,7 +182,7 @@ elif defined(linux):
       if (s.events[i].events and EPOLLIN) != 0: evSet = evSet + {EvRead}
       if (s.events[i].events and EPOLLOUT) != 0: evSet = evSet + {EvWrite}
       let selectorKey = s.fds[fd]
-      assert selectorKey.fd != 0.SocketHandle
+      assert selectorKey.fd != 0.AsyncFd
       result.add((selectorKey, evSet))
 
       #echo("Epoll: ", result[i].key.fd, " ", result[i].events, " ", result[i].key.events)
@@ -187,22 +192,23 @@ elif defined(linux):
     if result.epollFD < 0:
       raiseOSError(osLastError())
     when MultiThreaded:
-      result.fds = initSharedTable[SocketHandle, SelectorKey]()
+      result.fds = initSharedTable[SocketHandle, SelectorData]()
     else:
-      result.fds = initTable[SocketHandle, SelectorKey]()
+      result.fds = initTable[SocketHandle, SelectorData]()
 
-  proc contains*(s: var Selector, fd: SocketHandle): bool =
+  proc contains*(s: var Selector, fd: AsyncFd): bool =
     ## Determines whether selector contains a file descriptor.
+    let fd = fd.SocketHandle
     if s.fds.hasKey(fd):
       # Ensure the underlying epoll instance still contains this fd.
-      if s.fds[fd].events != {}:
+      if s.fds.getOrDefault(fd).events != {}:
         result = epollHasFd(s, fd)
       else:
         result = true
     else:
       return false
 
-  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorKey =
+  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorData =
     ## Retrieves the selector key for ``fd``.
     return s.fds[fd]
 
@@ -212,9 +218,9 @@ elif defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd):
       kqFD: cint
       events: array[64, KEvent]
       when MultiThreaded:
-        fds: SharedTable[SocketHandle, SelectorKey]
+        fds: SharedTable[SocketHandle, SelectorData]
       else:
-        fds: Table[SocketHandle, SelectorKey]
+        fds: Table[SocketHandle, SelectorData]
 
   template modifyKQueue(kqFD: cint, fd: SocketHandle, event: Event,
                         op: cushort) =
@@ -224,20 +230,23 @@ elif defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd):
     if kevent(kqFD, addr kev, 1, nil, 0, nil) == -1:
       raiseOSError(osLastError())
 
-  proc register*(s: var Selector, fd: SocketHandle, events: set[Event],
-                 data: SelectorData) =
-    for event in events:
+  proc register*(s: var Selector, fd: SocketHandle, data: SelectorData) =
+    for event in data.events:
       modifyKQueue(s.kqFD, fd, event, EV_ADD)
-    s.fds[fd] = SelectorKey(fd: fd, events: events, data: data)
+    s.fds[fd] = data
 
   proc update*(s: var Selector, fd: SocketHandle, events: set[Event]) =
-    let previousEvents = s.fds.getOrDefault(fd).events
-    if previousEvents != events:
-      for event in events-previousEvents:
-        modifyKQueue(s.kqFD, fd, event, EV_ADD)
-      for event in previousEvents-events:
-        modifyKQueue(s.kqFD, fd, event, EV_DELETE)
-      s.fds[fd].events = events
+    var i = 0
+    for v in allValues(s.fds, fd):
+      let previousEvents = v.events
+      if previousEvents == events: break
+      if i == 0:
+        for event in events-previousEvents:
+          modifyKQueue(s.kqFD, fd, event, EV_ADD)
+        for event in previousEvents-events:
+          modifyKQueue(s.kqFD, fd, event, EV_DELETE)
+      v.events = events
+      inc i
 
   proc unregister*(s: var Selector, fd: SocketHandle) =
     for event in s.fds[fd].events:
@@ -268,7 +277,7 @@ elif defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd):
       if   s.events[i].filter == EVFILT_READ:  evSet = evSet + {EvRead}
       elif s.events[i].filter == EVFILT_WRITE: evSet = evSet + {EvWrite}
       let selectorKey = s.fds[fd]
-      assert selectorKey.fd != 0.SocketHandle
+      assert selectorKey.fd != 0.AsyncFd
       result.add((selectorKey, evSet))
 
   proc newSelector*(): Selector =
@@ -276,15 +285,15 @@ elif defined(macosx) or defined(freebsd) or defined(openbsd) or defined(netbsd):
     if result.kqFD < 0:
       raiseOSError(osLastError())
     when MultiThreaded:
-      result.fds = initSharedTable[SocketHandle, SelectorKey]()
+      result.fds = initSharedTable[SocketHandle, SelectorData]()
     else:
-      result.fds = initTable[SocketHandle, SelectorKey]()
+      result.fds = initTable[SocketHandle, SelectorData]()
 
-  proc contains*(s: var Selector, fd: SocketHandle): bool =
+  proc contains*(s: var Selector, fd: AsyncFd): bool =
     ## Determines whether selector contains a file descriptor.
-    s.fds.hasKey(fd) # and s.fds[fd].events != {}
+    s.fds.hasKey(fd.SocketHandle) # and s.fds[fd].events != {}
 
-  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorKey =
+  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorData =
     ## Retrieves the selector key for ``fd``.
     return s.fds[fd]
 
@@ -293,12 +302,11 @@ elif not defined(nimdoc):
   type
     Selector* = object
       when MultiThreaded:
-        fds: SharedTable[SocketHandle, SelectorKey]
+        fds: SharedTable[SocketHandle, SelectorData]
       else:
-        fds: Table[SocketHandle, SelectorKey]
+        fds: Table[SocketHandle, SelectorData]
 
-  proc register*(s: var Selector, fd: SocketHandle, events: set[Event],
-                 data: SelectorData) =
+  proc register*(s: var Selector, fd: SocketHandle, data: SelectorData) =
     let result = SelectorKey(fd: fd, events: events, data: data)
     if s.fds.hasKeyOrPut(fd, result):
       raise newException(ValueError, "File descriptor already exists.")
@@ -363,28 +371,20 @@ elif not defined(nimdoc):
 
   proc newSelector*(): Selector =
     when MultiThreaded:
-      result.fds = initSharedTable[SocketHandle, SelectorKey]()
+      result.fds = initSharedTable[SocketHandle, SelectorData]()
     else:
-      result.fds = initTable[SocketHandle, SelectorKey]()
+      result.fds = initTable[SocketHandle, SelectorData]()
 
   proc contains*(s: var Selector, fd: SocketHandle): bool =
     return s.fds.hasKey(fd)
 
-  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorKey =
+  proc `[]`*(s: var Selector, fd: SocketHandle): SelectorData =
     return s.fds[fd]
 
-proc contains*(s: var Selector, key: SelectorKey): bool =
-  ## Determines whether selector contains this selector key. More accurate
-  ## than checking if the file descriptor is in the selector because it
-  ## ensures that the keys are equal. File descriptors may not always be
-  ## unique especially when an fd is closed and then a new one is opened,
-  ## the new one may have the same value.
-  when not defined(nimdoc):
-    return s.fds.getOrDefault(key.fd) == key
+{.deprecated: [TEvent: Event, TReadyInfo: ReadyInfo, PSelector: Selector].}
 
-{.deprecated: [TEvent: Event, PSelectorKey: SelectorKey,
-   TReadyInfo: ReadyInfo, PSelector: Selector].}
-
+proc add*(s: var Selector; key: SocketHandle; val: SelectorData) =
+  s.fds.add(key, val)
 
 when not defined(testing) and isMainModule and not defined(nimdoc):
   # Select()

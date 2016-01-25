@@ -139,3 +139,14 @@ proc genericDeepCopyOpenArray(dest, src: pointer, len: int,
   for i in 0..len-1:
     genericDeepCopy(cast[pointer](d +% i*% mt.base.size),
                     cast[pointer](s +% i*% mt.base.size), mt.base)
+
+when hasThreadSupport:
+  proc copyClosureEnv*(env: ForeignCell): pointer =
+    ## undocumented. Use at your own risk.
+    when not declared(usrToCell):
+      {.error: "the currently active GC does not support 'moveClosure'".}
+    if isNotForeign(env):
+      result = env.data
+    else:
+      genericDeepCopy(addr result,
+        unsafeAddr env.data, usrToCell(env.data).typ)

@@ -11,7 +11,7 @@ include "system/inclrtl"
 
 import os, oids, tables, strutils, macros, times
 
-import nativesockets, net
+import nativesockets, net, sharedlist, sharedtables, selectors
 
 export Port, SocketFlag
 
@@ -166,7 +166,7 @@ proc newFuture*[T](fromProc: string = "unspecified"): Future[T] =
     result.stackTrace = getStackTrace()
     result.id = currentID
     result.fromProc = fromProc
-    currentID.inc()
+    currentID.inc() # XXX atomicInc this instead
 
 proc newFutureVar*[T](fromProc = "unspecified"): FutureVar[T] =
   ## Create a new ``FutureVar``. This Future type is ideally suited for
@@ -353,17 +353,53 @@ proc `or`*[T, Y](fut1: Future[T], fut2: Future[Y]): Future[void] =
   return retFuture
 
 type
-  PDispatcherBase = ref object of RootRef
-    timers: seq[tuple[finishAt: float, fut: Future[void]]]
+  TimerDesc = object
+    finishAt: float
+    t: SelectorData
+  DispatcherBase = object of RootObj
+    timers: SharedList[TimerDesc]
 
-proc processTimers(p: PDispatcherBase) =
-  var oldTimers = p.timers
-  p.timers = @[]
-  for t in oldTimers:
-    if epochTime() >= t.finishAt:
-      t.fut.complete()
+# we use our own thread pool for now:
+const NumberOfWorkers = 4 #getEnv("NIM_ASYNC_THREADS").parseInt
+var
+  daQueue: Channel[SelectorData]
+  workers: array[NumberOfWorkers, Thread[void]]
+
+proc anotherIO(t: SelectorData) {.gcsafe, locks: 0.}
+
+proc worker() {.thread.} =
+  while true:
+    let t = daQueue.recv()
+    if t.procPtr.isNil: break
+    if t.procPtr(t.fd, copyClosureEnv(t.env)):
+      case t.requestedAction
+      of EvError: dispose(t.env)
+      of EvRead, EvWrite: anotherIO(t)
     else:
-      p.timers.add(t)
+      dispose(t.env)
+
+proc setup =
+  for i in 0..high(workers):
+    createThread(workers[i], worker)
+  open(daQueue)
+
+setup()
+
+proc timerCallback(fd: AsyncFD; env: pointer): bool {.cdecl.} =
+  # we know that timers are Future[void], so we do not lose
+  # any information by casting to 'FutureBase':
+  cast[FutureBase](env).cb()
+  result = false
+
+proc processTimers(p: var DispatcherBase) =
+  p.timers.iterAndMutate do (x: auto) -> bool:
+    if epochTime() >= x.finishAt:
+      let newTask = SelectorData(fd: AsyncFD 0, requestedAction: EvError,
+                                 env: x.t.env,
+                                 procPtr: timerCallback)
+      daQueue.send(newTask)
+      # completed, so delete it:
+      result = true
 
 when defined(windows) or defined(nimdoc):
   import winlean, sets, hashes
@@ -375,7 +411,7 @@ when defined(windows) or defined(nimdoc):
       cb*: proc (fd: AsyncFD, bytesTransferred: Dword,
                 errcode: OSErrorCode) {.closure,gcsafe.}
 
-    PDispatcher* = ref object of PDispatcherBase
+    Dispatcher* = object of PDispatcherBase
       ioPort: Handle
       handles: HashSet[AsyncFD]
 
@@ -387,9 +423,6 @@ when defined(windows) or defined(nimdoc):
     AsyncFD* = distinct int
   {.deprecated: [TCompletionKey: CompletionKey, TAsyncFD: AsyncFD,
                 TCustomOverlapped: CustomOverlapped, TCompletionData: CompletionData].}
-
-  proc hash(x: AsyncFD): Hash {.borrow.}
-  proc `==`*(x: AsyncFD, y: AsyncFD): bool {.borrow.}
 
   proc newDispatcher*(): PDispatcher =
     ## Creates a new Dispatcher instance.
@@ -925,7 +958,6 @@ when defined(windows) or defined(nimdoc):
 
   initAll()
 else:
-  import selectors
   when defined(windows):
     import winlean
     const
@@ -939,7 +971,6 @@ else:
                       MSG_NOSIGNAL
 
   type
-    AsyncFD* = distinct cint
     Callback = proc (fd: AsyncFD): bool {.closure,gcsafe.}
 
     PData* = ref object of RootRef
@@ -947,31 +978,27 @@ else:
       readCBs: seq[Callback]
       writeCBs: seq[Callback]
 
-    PDispatcher* = ref object of PDispatcherBase
+    Dispatcher* = ptr object of DispatcherBase
       selector: Selector
-  {.deprecated: [TAsyncFD: AsyncFD].}
 
-  proc `==`*(x, y: AsyncFD): bool {.borrow.}
-
-  proc newDispatcher*(): PDispatcher =
-    new result
+  proc newDispatcher*(): Dispatcher =
+    result = cast[Dispatcher](alloc(sizeof(result[])))
     result.selector = newSelector()
-    result.timers = @[]
+    result.timers = initSharedList[TimerDesc]()
 
-  var gDisp{.threadvar.}: PDispatcher ## Global dispatcher
-  proc getGlobalDispatcher*(): PDispatcher =
+  var gDisp: Dispatcher ## Global dispatcher
+  proc getGlobalDispatcher*(): Dispatcher =
     if gDisp.isNil: gDisp = newDispatcher()
     result = gDisp
 
   proc update(fd: AsyncFD, events: set[Event]) =
-    let p = getGlobalDispatcher()
-    assert fd.SocketHandle in p.selector
+    var p = getGlobalDispatcher()
+    #assert fd in p.selector
     p.selector.update(fd.SocketHandle, events)
 
   proc register*(fd: AsyncFD) =
     let p = getGlobalDispatcher()
-    var data = PData(fd: fd, readCBs: @[], writeCBs: @[])
-    p.selector.register(fd.SocketHandle, {}, data.RootRef)
+    p.selector.register(fd.SocketHandle, SelectorData())
 
   proc newAsyncNativeSocket*(domain: cint, sockType: cint,
                              protocol: cint): AsyncFD =
@@ -998,61 +1025,52 @@ else:
   proc unregister*(fd: AsyncFD) =
     getGlobalDispatcher().selector.unregister(fd.SocketHandle)
 
-  proc addRead*(fd: AsyncFD, cb: Callback) =
+  proc anotherIO(t: SelectorData) =
+    # addCallback inlined:
     let p = getGlobalDispatcher()
-    if fd.SocketHandle notin p.selector:
+    if t.fd notin p.selector:
       raise newException(ValueError, "File descriptor not registered.")
-    p.selector[fd.SocketHandle].data.PData.readCBs.add(cb)
-    update(fd, p.selector[fd.SocketHandle].events + {EvRead})
+    p.selector.add(t.fd.SocketHandle, t)
+    update(t.fd, p.selector[t.fd.SocketHandle].events +
+          {t.requestedAction})
+
+  proc addCallback(fd: AsyncFD; cb: Callback; ev: Event) =
+    let p = getGlobalDispatcher()
+    if fd notin p.selector:
+      raise newException(ValueError, "File descriptor not registered.")
+    p.selector.add(fd.SocketHandle, SelectorData(
+      fd: fd,
+      requestedAction: ev,
+      env: protect(cb.rawEnv),
+      procPtr: cast[SelectorCallback](cb.rawProc)))
+    update(fd, p.selector[fd.SocketHandle].events + {ev})
+
+  proc addRead*(fd: AsyncFD, cb: Callback) =
+    addCallback(fd, cb, EvRead)
 
   proc addWrite*(fd: AsyncFD, cb: Callback) =
-    let p = getGlobalDispatcher()
-    if fd.SocketHandle notin p.selector:
-      raise newException(ValueError, "File descriptor not registered.")
-    p.selector[fd.SocketHandle].data.PData.writeCBs.add(cb)
-    update(fd, p.selector[fd.SocketHandle].events + {EvWrite})
+    addCallback(fd, cb, EvWrite)
 
   proc poll*(timeout = 500) =
     let p = getGlobalDispatcher()
     for info in p.selector.select(timeout):
-      let data = PData(info.key.data)
-      assert data.fd == info.key.fd.AsyncFD
       #echo("In poll ", data.fd.cint)
       # There may be EvError here, but we handle them in callbacks,
       # so that exceptions can be raised from `send(...)` and
       # `recv(...)` routines.
 
-      if EvRead in info.events:
-        # Callback may add items to ``data.readCBs`` which causes issues if
-        # we are iterating over ``data.readCBs`` at the same time. We therefore
-        # make a copy to iterate over.
-        let currentCBs = data.readCBs
-        data.readCBs = @[]
-        for cb in currentCBs:
-          if not cb(data.fd):
-            # Callback wants to be called again.
-            data.readCBs.add(cb)
+      if {EvRead, EvWrite} * info.events != {}:
+        daQueue.send(info.key)
 
-      if EvWrite in info.events:
-        let currentCBs = data.writeCBs
-        data.writeCBs = @[]
-        for cb in currentCBs:
-          if not cb(data.fd):
-            # Callback wants to be called again.
-            data.writeCBs.add(cb)
-
-      if info.key in p.selector:
-        var newEvents: set[Event]
-        if data.readCBs.len != 0: newEvents = {EvRead}
-        if data.writeCBs.len != 0: newEvents = newEvents + {EvWrite}
-        if newEvents != info.key.events:
-          update(data.fd, newEvents)
+      if info.key.fd in p.selector:
+        if info.events != info.key.events:
+          update(info.key.fd, info.events)
       else:
         # FD no longer a part of the selector. Likely been closed
         # (e.g. socket disconnected).
         discard
 
-    processTimers(p)
+    processTimers(p[])
 
   proc connect*(socket: AsyncFD, address: string, port: Port,
     domain = AF_INET): Future[void] =
@@ -1093,7 +1111,7 @@ else:
           success = false
       it = it.ai_next
 
-    dealloc(aiList)
+    nativesockets.dealloc(aiList)
     if not success:
       retFuture.fail(newException(OSError, osErrorMsg(lastError)))
     return retFuture
@@ -1215,7 +1233,10 @@ proc sleepAsync*(ms: int): Future[void] =
   ## ``ms`` milliseconds.
   var retFuture = newFuture[void]("sleepAsync")
   let p = getGlobalDispatcher()
-  p.timers.add((epochTime() + (ms / 1000), retFuture))
+  p.timers.add(TimerDesc(finishAt: epochTime() + (ms / 1000),
+    t: SelectorData(fd: AsyncFd 0, requestedAction: EvError,
+                    env: protect(cast[pointer](retFuture)),
+                    procPtr: nil)))
   return retFuture
 
 proc accept*(socket: AsyncFD,
