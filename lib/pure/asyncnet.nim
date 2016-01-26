@@ -55,7 +55,7 @@
 ##   runForever()
 ##
 
-import asyncdispatch
+import asyncdispatch, selectors
 import nativesockets
 import net
 import os
