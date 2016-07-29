@@ -568,6 +568,8 @@ proc matchUserTypeClass*(c: PContext, m: var TCandidate,
     dec c.inTypeClass
     closeScope(c)
 
+  var typeParams: seq[(PSym, PType)]
+
   if ff.kind == tyUserTypeClassInst:
     for i in 1 .. <(ff.len - 1):
       var
@@ -590,7 +592,12 @@ proc matchUserTypeClass*(c: PContext, m: var TCandidate,
         param = paramSym skType
         param.typ = makeTypeDesc(c, typ)
 
+      if typ.isMetaType:
+        param.typ.flags.incl tfInferrableTypeClassTypeParam
+
       addDecl(c, param)
+      typeParams.safeAdd((param, typ))
+
       #echo "A ", param.name.s, " ", typeToString(param.typ), " ", param.kind
 
   for param in body.n[0]:
@@ -613,6 +620,13 @@ proc matchUserTypeClass*(c: PContext, m: var TCandidate,
 
   var checkedBody = c.semTryExpr(c, body.n[3].copyTree)
   if checkedBody == nil: return isNone
+
+  # The inferrable type params have been identified during the semTryExpr above.
+  # We need to put them in the current sigmatch's binding table in order for them
+  # to be resolvable while matching the rest of the parameters
+  for p in typeParams:
+    put(m.bindings, p[0].typ, p[1])
+
   return isGeneric
 
 proc shouldSkipDistinct(rules: PNode, callIdent: PIdent): bool =
@@ -1320,6 +1334,27 @@ proc incMatches(m: var TCandidate; r: TTypeRelation; convMatch = 1) =
   of isEqual: inc(m.exactMatches)
   of isNone: discard
 
+proc skipToInferrableParam(tt: PType): PType =
+  var t = tt
+  while t != nil:
+    if tfInferrableTypeClassTypeParam in t.flags:
+      return t
+    if t.sonsLen > 0 and t.kind == tyTypeDesc:
+      t = t.base
+    else:
+      return nil
+
+  return nil
+
+proc inferTypeClassParam*(c: PContext, f, a: PType): bool =
+  if c.inTypeClass == 0: return false
+
+  var inferrableType = a.skipToInferrableParam
+  if inferrableType == nil: return false
+
+  inferrableType.assignType f
+  return true
+
 proc paramTypesMatchAux(m: var TCandidate, f, argType: PType,
                         argSemantized, argOrig: PNode): PNode =
   var
@@ -1327,6 +1362,9 @@ proc paramTypesMatchAux(m: var TCandidate, f, argType: PType,
     arg = argSemantized
     argType = argType
     c = m.c
+
+  if inferTypeClassParam(c, f, argType):
+    return argSemantized
 
   if tfHasStatic in fMaybeStatic.flags:
     # XXX: When implicit statics are the default
