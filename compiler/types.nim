@@ -49,18 +49,18 @@ proc enumHasHoles*(t: PType): bool
 
 const
   abstractPtrs* = {tyVar, tyPtr, tyRef, tyGenericInst, tyDistinct, tyOrdinal,
-                   tyConst, tyMutable, tyTypeDesc}
+                   tyConst, tyMutable, tyTypeDesc, tyInferred}
   abstractVar* = {tyVar, tyGenericInst, tyDistinct, tyOrdinal,
-                  tyConst, tyMutable, tyTypeDesc}
+                  tyConst, tyMutable, tyTypeDesc, tyInferred}
   abstractRange* = {tyGenericInst, tyRange, tyDistinct, tyOrdinal,
-                    tyConst, tyMutable, tyTypeDesc}
+                    tyConst, tyMutable, tyTypeDesc, tyInferred}
   abstractVarRange* = {tyGenericInst, tyRange, tyVar, tyDistinct, tyOrdinal,
-                       tyConst, tyMutable, tyTypeDesc}
+                       tyConst, tyMutable, tyTypeDesc, tyInferred}
   abstractInst* = {tyGenericInst, tyDistinct, tyConst, tyMutable, tyOrdinal,
-                   tyTypeDesc}
+                   tyTypeDesc, tyInferred}
 
   skipPtrs* = {tyVar, tyPtr, tyRef, tyGenericInst, tyConst, tyMutable,
-               tyTypeDesc}
+               tyTypeDesc, tyInferred}
   typedescPtrs* = abstractPtrs + {tyTypeDesc}
   typedescInst* = abstractInst + {tyTypeDesc}
 
@@ -406,7 +406,7 @@ const
     "bignum", "const ",
     "!", "varargs[$1]", "iter[$1]", "Error Type",
     "BuiltInTypeClass", "UserTypeClass",
-    "UserTypeClassInst", "CompositeTypeClass",
+    "UserTypeClassInst", "CompositeTypeClass", "inferred",
     "and", "or", "not", "any", "static", "TypeFromExpr", "FieldAccessor",
     "void"]
 
@@ -472,6 +472,10 @@ proc typeToString(typ: PType, prefer: TPreferedDesc = preferName): string =
       of tyTuple: "tuple"
       of tyOpenArray: "openarray"
       else: typeToStr[t.base.kind]
+  of tyInferred:
+    let concrete = t.previouslyInferred
+    if concrete != nil: result = typeToString(concrete)
+    else: result = "inferred[" & typeToString(t.base) & "]"
   of tyUserTypeClassInst:
     let body = t.base
     result = body.sym.name.s & "["
@@ -981,7 +985,9 @@ proc sameTypeAux(x, y: PType, c: var TSameTypeClosure): bool =
     result = sameTypeOrNilAux(a.sons[0], b.sons[0], c) and
         sameValue(a.n.sons[0], b.n.sons[0]) and
         sameValue(a.n.sons[1], b.n.sons[1])
-  of tyGenericInst: discard
+  of tyGenericInst, tyInferred:
+    cycleCheck()
+    result = sameTypeAux(a.lastSon, b.lastSon, c)
   of tyNone: result = false
 
 proc sameBackendType*(x, y: PType): bool =
@@ -1127,7 +1133,7 @@ proc typeAllowedAux(marker: var IntSet, typ: PType, kind: TSymKind,
     result = nil
   of tyOrdinal:
     if kind != skParam: result = t
-  of tyGenericInst, tyDistinct:
+  of tyGenericInst, tyDistinct, tyInferred:
     result = typeAllowedAux(marker, lastSon(t), kind, flags)
   of tyRange:
     if skipTypes(t.sons[0], abstractInst-{tyTypeDesc}).kind notin

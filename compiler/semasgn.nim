@@ -225,7 +225,7 @@ proc liftBodyAux(c: var TLiftCtx; t: PType; body, x, y: PNode) =
      tyMutable, tyGenericParam, tyGenericBody, tyNil, tyExpr, tyStmt,
      tyTypeDesc, tyGenericInvocation, tyBigNum, tyConst, tyForward:
     internalError(c.info, "assignment requested for type: " & typeToString(t))
-  of tyOrdinal, tyRange,
+  of tyOrdinal, tyRange, tyInferred,
      tyGenericInst, tyFieldAccessor, tyStatic, tyVar:
     liftBodyAux(c, lastSon(t), body, x, y)
 

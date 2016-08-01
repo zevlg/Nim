@@ -100,7 +100,7 @@ proc getUniqueType*(key: PType): PType =
       result = key
   of tyTypeDesc, tyTypeClasses, tyGenericParam, tyFromExpr, tyFieldAccessor:
     if key.isResolvedUserTypeClass:
-      return getUniqueType(lastSon(key))
+      return getUniqueType(key.lastSon)
     if key.sym != nil:
       internalError(key.sym.info, "metatype not eliminated")
     else:
@@ -108,7 +108,7 @@ proc getUniqueType*(key: PType): PType =
   of tyDistinct:
     if key.deepCopy != nil: result = key
     else: result = getUniqueType(lastSon(key))
-  of tyGenericInst, tyOrdinal, tyMutable, tyConst, tyIter, tyStatic:
+  of tyGenericInst, tyOrdinal, tyMutable, tyConst, tyIter, tyStatic, tyInferred:
     result = getUniqueType(lastSon(key))
     #let obj = lastSon(key)
     #if obj.sym != nil and obj.sym.name.s == "TOption":
