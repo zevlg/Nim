@@ -121,9 +121,12 @@ proc mapType(typ: PType): TCTypeKind =
   of tySet: result = mapSetType(typ)
   of tyOpenArray, tyArrayConstr, tyArray, tyVarargs: result = ctArray
   of tyObject, tyTuple: result = ctStruct
+  of tyUserTypeClass, tyUserTypeClassInst:
+    internalAssert typ.isResolvedUserTypeClass
+    return mapType(typ.lastSon)
   of tyGenericBody, tyGenericInst, tyGenericParam, tyDistinct, tyOrdinal,
      tyConst, tyMutable, tyIter, tyTypeDesc, tyInferred:
-    result = mapType(lastSon(typ))
+    result = mapType(typ.lastSon)
   of tyEnum:
     if firstOrd(typ) < 0:
       result = ctInt32
