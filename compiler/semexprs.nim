@@ -1772,8 +1772,7 @@ proc tryExpr(c: PContext, n: PNode, flags: TExprFlags = {}): PNode =
     result = semExpr(c, n, flags)
     if msgs.gErrorCounter != oldErrorCount: result = nil
   except ERecoverableError:
-    if optReportConceptFailures in gGlobalOptions:
-      err = getCurrentExceptionMsg()
+    discard
   # undo symbol table changes (as far as it's possible):
   c.compilesContextId = oldCompilesId
   c.generics = oldGenerics
@@ -1787,8 +1786,6 @@ proc tryExpr(c: PContext, n: PNode, flags: TExprFlags = {}): PNode =
   errorOutputs = oldErrorOutputs
   msgs.gErrorCounter = oldErrorCount
   msgs.gErrorMax = oldErrorMax
-  if optReportConceptFailures in gGlobalOptions and not err.isNil:
-    localError(n.info, err)
 
 proc semCompiles(c: PContext, n: PNode, flags: TExprFlags): PNode =
   # we replace this node by a 'true' or 'false' node:
