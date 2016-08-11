@@ -134,6 +134,7 @@ proc isCastable(dst, src: PType): bool =
   #  castableTypeKinds = {tyInt, tyPtr, tyRef, tyCstring, tyString,
   #                       tySequence, tyPointer, tyNil, tyOpenArray,
   #                       tyProc, tySet, tyEnum, tyBool, tyChar}
+  let src = src.skipTypes(tyUserTypeClasses)
   if skipTypes(dst, abstractInst-{tyOpenArray}).kind == tyOpenArray:
     return false
   var dstSize, srcSize: BiggestInt
@@ -957,28 +958,14 @@ proc makeDeref(n: PNode): PNode =
     t = skipTypes(baseTyp, {tyGenericInst})
 
 const
-  tyTypeParamsHolders = {tyGenericInst, tyUserTypeClassInst, tyCompositeTypeClass}
+  tyTypeParamsHolders = {tyGenericInst, tyCompositeTypeClass,
+                         tyUserTypeClass, tyUserTypeClassInst}
   tyDotOpTransparent = {tyVar, tyPtr, tyRef}
 
 proc readTypeParameter(c: PContext, typ: PType,
                        paramName: PIdent, info: TLineInfo): PNode =
-  let ty = if typ.kind in {tyGenericInst, tyUserTypeClassInst}: typ.skipGenericAlias
-           else: (internalAssert(typ.kind == tyCompositeTypeClass);
-                  typ.sons[1].skipGenericAlias)
-
-  let tbody = ty.sons[0]
-  for s in countup(0, tbody.len-2):
-    let tParam = tbody.sons[s]
-    if tParam.sym.name.id == paramName.id:
-      let rawTyp = ty.sons[s + 1]
-      if rawTyp.kind == tyStatic:
-        return rawTyp.n
-      else:
-        let foundTyp = makeTypeDesc(c, rawTyp)
-        return newSymNode(copySym(tParam.sym).linkTo(foundTyp), info)
-
-  if ty.n != nil:
-    for statement in ty.n:
+  if typ.kind in {tyUserTypeClass, tyUserTypeClassInst}:
+    for statement in typ.n:
       case statement.kind
       of nkTypeSection:
         for def in statement:
@@ -988,7 +975,7 @@ proc readTypeParameter(c: PContext, typ: PType,
             # This seems semantically correct and then we'll be able
             # to return the section symbol directly here
             let foundType = makeTypeDesc(c, def[2].typ)
-            return newSymNode(copySym(def[2].sym).linkTo(foundType), info)
+            return newSymNode(copySym(def[0].sym).linkTo(foundType), info)
 
       of nkConstSection:
         for def in statement:
@@ -997,6 +984,20 @@ proc readTypeParameter(c: PContext, typ: PType,
 
       else:
         discard
+  
+  if typ.kind != tyUserTypeClass:
+    let ty = if typ.kind == tyCompositeTypeClass: typ.sons[1].skipGenericAlias
+             else: typ.skipGenericAlias
+    let tbody = ty.sons[0]
+    for s in countup(0, tbody.len-2):
+      let tParam = tbody.sons[s]
+      if tParam.sym.name.id == paramName.id:
+        let rawTyp = ty.sons[s + 1]
+        if rawTyp.kind == tyStatic:
+          return rawTyp.n
+        else:
+          let foundTyp = makeTypeDesc(c, rawTyp)
+          return newSymNode(copySym(tParam.sym).linkTo(foundTyp), info)
 
   return nil
 

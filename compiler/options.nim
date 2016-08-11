@@ -408,6 +408,7 @@ template nimdbg*: expr = c.module.fileIdx == gProjectMainIdx
 template cnimdbg*: expr = p.module.module.fileIdx == gProjectMainIdx
 template pnimdbg*: expr = p.lex.fileIdx == gProjectMainIdx
 template lnimdbg*: expr = L.fileIdx == gProjectMainIdx
+template signimdbg*: expr = c.c.module.fileIdx == gProjectMainIdx
 
 proc parseIdeCmd*(s: string): IdeCmd =
   case s:
