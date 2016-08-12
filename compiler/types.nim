@@ -57,7 +57,7 @@ const
   abstractVarRange* = {tyGenericInst, tyRange, tyVar, tyDistinct, tyOrdinal,
                        tyConst, tyMutable, tyTypeDesc, tyInferred}
   abstractInst* = {tyGenericInst, tyDistinct, tyConst, tyMutable, tyOrdinal,
-                   tyTypeDesc, tyInferred} + tyTypeClasses
+                   tyTypeDesc, tyInferred}
 
   skipPtrs* = {tyVar, tyPtr, tyRef, tyGenericInst, tyConst, tyMutable,
                tyTypeDesc, tyInferred}
