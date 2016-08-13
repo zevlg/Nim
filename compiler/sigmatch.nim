@@ -22,7 +22,13 @@ type
   TCandidateState* = enum
     csEmpty, csMatch, csNoMatch
 
-  CandidateErrors* = seq[(PSym,int)]
+  CandidateError = tuple
+    sym: PSym
+    unmatchedVarParam: int
+    diagnostics: seq[string]
+  
+  CandidateErrors* = seq[CandidateError]
+
   TCandidate* = object
     c*: PContext
     exactMatches*: int       # also misused to prefer iters over procs
@@ -53,11 +59,16 @@ type
                               # matching. they will be reset if the matching
                               # is not successful. may replace the bindings
                               # table in the future.
+    diagnostics*: seq[string] # when this is not nil, the matching process
+                              # will collect extra diagnostics that will be
+                              # displayed to the user.
+                              # triggered when overload resolution fails
+                              # or when the explain pragma is used. may be
+                              # triggered with an idetools command in the
+                              # future.
     mutabilityProblem*: uint8 # tyVar mismatch
     inheritancePenalty: int  # to prefer closest father object type
-    errors*: CandidateErrors # additional clarifications to be displayed to the
-                             # user if overload resolution fails
-
+  
   TTypeRelation* = enum      # order is important!
     isNone, isConvertible,
     isIntConv,
@@ -105,7 +116,7 @@ proc put(t: var TIdTable, key, val: PType) {.inline.} =
   idTablePut(t, key, val.skipIntLit)
 
 proc initCandidate*(ctx: PContext, c: var TCandidate, callee: PSym,
-                    binding: PNode, calleeScope = -1) =
+                    binding: PNode, calleeScope = -1, diagnostics = false) =
   initCandidateAux(ctx, c, callee.typ)
   c.calleeSym = callee
   if callee.kind in skProcKinds and calleeScope == -1:
@@ -120,9 +131,9 @@ proc initCandidate*(ctx: PContext, c: var TCandidate, callee: PSym,
       c.calleeScope = 1
   else:
     c.calleeScope = calleeScope
+  c.diagnostics = if diagnostics: @[] else: nil
   c.magic = c.calleeSym.magic
   initIdTable(c.bindings)
-  c.errors = nil
   if binding != nil and callee.kind in routineKinds:
     var typeParams = callee.ast[genericParamsPos]
     for i in 1..min(sonsLen(typeParams), sonsLen(binding)-1):
@@ -560,14 +571,15 @@ proc typeRangeRel(f, a: PType): TTypeRelation {.noinline.} =
 
 proc matchUserTypeClass*(c: PContext, m: var TCandidate,
                          ff, a: PType): PType =
-  var body = ff.skipTypes({tyUserTypeClassInst})
+  var
+    Concept = ff.skipTypes({tyUserTypeClassInst})
+    body = Concept.n[3]
   if c.inTypeClass > 4:
-    localError(body.n[3].info, $body.n[3] & " too nested for type matching")
+    localError(body.info, $body & " too nested for type matching")
     return nil
 
   openScope(c)
   inc c.inTypeClass
-
   defer:
     dec c.inTypeClass
     closeScope(c)
@@ -582,7 +594,7 @@ proc matchUserTypeClass*(c: PContext, m: var TCandidate,
         param: PSym
 
       template paramSym(kind): expr =
-        newSym(kind, typeParamName, body.sym, body.sym.info)
+        newSym(kind, typeParamName, Concept.sym, Concept.sym.info)
 
       case typ.kind
       of tyStatic:
@@ -605,7 +617,7 @@ proc matchUserTypeClass*(c: PContext, m: var TCandidate,
       addDecl(c, param)
       typeParams.safeAdd((param, typ))
 
-  for param in body.n[0]:
+  for param in Concept.n[0]:
     var
       dummyName: PNode
       dummyType: PType
@@ -628,11 +640,31 @@ proc matchUserTypeClass*(c: PContext, m: var TCandidate,
 
     internalAssert dummyName.kind == nkIdent
     var dummyParam = newSym(if modifier == tyTypeDesc: skType else: skVar,
-                            dummyName.ident, body.sym, body.sym.info)
+                            dummyName.ident, Concept.sym, Concept.sym.info)
     dummyParam.typ = dummyType
     addDecl(c, dummyParam)
 
-  var checkedBody = c.semTryExpr(c, body.n[3].copyTree)
+  var
+    oldWriteHook: type(writelnHook)
+    diagnostics: seq[string]
+    flags: TExprFlags = {}
+    collectDiagnostics = m.diagnostics != nil or
+                         sfExplain in Concept.sym.flags
+  
+  if collectDiagnostics:
+    oldWriteHook = writelnHook
+    # XXX: we can't write to m.diagnostics directly, because
+    # Nim doesn't support capturing var params in closures
+    diagnostics = @[]
+    writelnHook = proc (s: string) = diagnostics.add(s)
+    flags = {efExplain}
+
+  var checkedBody = c.semTryExpr(c, body.copyTree, flags)
+  
+  if collectDiagnostics:
+    writelnHook = oldWriteHook
+    for msg in diagnostics: m.diagnostics.safeAdd msg
+  
   if checkedBody == nil: return nil
 
   # The inferrable type params have been identified during the semTryExpr above.
@@ -1488,7 +1520,7 @@ proc localConvMatch(c: PContext, m: var TCandidate, f, a: PType,
   var call = newNodeI(nkCall, arg.info)
   call.add(f.n.copyTree)
   call.add(arg.copyTree)
-  result = c.semOverloadedCall(c, call, call, routineKinds)
+  result = c.semOverloadedCall(c, call, call, routineKinds, {})
   if result != nil:
     # resulting type must be consistent with the other arguments:
     var r = typeRel(m, f.sons[0], result.typ)
