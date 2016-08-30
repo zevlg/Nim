@@ -960,8 +960,7 @@ proc makeDeref(n: PNode): PNode =
     t = skipTypes(baseTyp, {tyGenericInst})
 
 const
-  tyTypeParamsHolders = {tyGenericInst, tyCompositeTypeClass,
-                         tyUserTypeClass, tyUserTypeClassInst}
+  tyTypeParamsHolders = {tyGenericInst, tyCompositeTypeClass}
   tyDotOpTransparent = {tyVar, tyPtr, tyRef}
 
 proc readTypeParameter(c: PContext, typ: PType,
@@ -1153,6 +1152,23 @@ proc builtinFieldAccess(c: PContext, n: PNode, flags: TExprFlags): PNode =
   var ty = n.sons[0].typ
   var f: PSym = nil
   result = nil
+
+  template tryReadingGenericParam(t: PType) =
+    case t.kind
+    of tyTypeParamsHolders:
+      return readTypeParameter(c, t, i, n.info)
+    of tyUserTypeClasses:
+      if t.isResolvedUserTypeClass:
+        return readTypeParameter(c, t, i, n.info)
+      else:
+        n.typ = makeTypeFromExpr(c, copyTree(n))
+        return n
+    of tyGenericParam:
+      n.typ = makeTypeFromExpr(c, copyTree(n))
+      return n
+    else:
+      discard
+
   if isTypeExpr(n.sons[0]) or (ty.kind == tyTypeDesc and ty.base.kind != tyNone):
     if ty.kind == tyTypeDesc: ty = ty.base
     ty = ty.skipTypes(tyDotOpTransparent)
@@ -1170,8 +1186,6 @@ proc builtinFieldAccess(c: PContext, n: PNode, flags: TExprFlags): PNode =
         markUsed(n.info, f)
         styleCheckUse(n.info, f)
         return
-    of tyTypeParamsHolders:
-      return readTypeParameter(c, ty, i, n.info)
     of tyObject, tyTuple:
       if ty.n != nil and ty.n.kind == nkRecList:
         for field in ty.n:
@@ -1180,8 +1194,7 @@ proc builtinFieldAccess(c: PContext, n: PNode, flags: TExprFlags): PNode =
             n.typ.n = copyTree(n)
             return n
     else:
-      # echo "TYPE FIELD ACCESS"
-      # debug ty
+      tryReadingGenericParam(ty)
       return
     # XXX: This is probably not relevant any more
     # reset to prevent 'nil' bug: see "tests/reject/tenumitems.nim":
@@ -1224,8 +1237,7 @@ proc builtinFieldAccess(c: PContext, n: PNode, flags: TExprFlags): PNode =
   # we didn't find any field, let's look for a generic param
   if result == nil:
     let t = n.sons[0].typ.skipTypes(tyDotOpTransparent)
-    if t.kind in tyTypeParamsHolders:
-      result = readTypeParameter(c, t, i, n.info)
+    tryReadingGenericParam(t)
 
 proc dotTransformation(c: PContext, n: PNode): PNode =
   if isSymChoice(n.sons[1]):
