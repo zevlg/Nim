@@ -55,8 +55,17 @@ type
                              # user if overload resolution fails
 
   TTypeRelation* = enum      # order is important!
-    isNone, isConvertible,
-    isIntConv,
+    isNone,
+    isConvertible,
+    isIntConv7,
+    isIntConv6,
+    isIntConv5,
+    isIntConv4,              # 4 byte diff
+    isIntConv3,              # integer conversion; 3 byte difference
+    isIntConv2,              # integer conversion; 2 byte difference
+    isIntConv1,              # integer conversion; 1 byte difference
+    isIntConv0,              # is integer conversion to same sized int
+    isIntConv,               # is integer conversion to 'int' (preferred)
     isSubtype,
     isSubrange,              # subrange of the wanted type; no type conversion
                              # but apart from that counts as ``isSubtype``
@@ -301,7 +310,7 @@ proc concreteType(c: TCandidate, t: PType): PType =
   else:
     result = t                # Note: empty is valid here
 
-proc handleRange(f, a: PType, min, max: TTypeKind): TTypeRelation =
+proc handleRange(f, a: PType, valid: set[TTypeKind]): TTypeRelation =
   if a.kind == f.kind:
     result = isEqual
   else:
@@ -317,16 +326,18 @@ proc handleRange(f, a: PType, min, max: TTypeKind): TTypeRelation =
       result = isFromIntLit
     elif f.kind == tyInt and k in {tyInt8..tyInt32}:
       result = isIntConv
-    elif k >= min and k <= max:
-      result = isConvertible
+    elif k in valid:
+      template isSigned(k): untyped = k in {tyInt..tyInt64}
+      if isSigned(f.kind) != isSigned(k):
+        result = isConvertible
+      else:
+        result = TTypeRelation(isIntConv0.ord - f.getSize + a.getSize)
     elif a.kind == tyRange and a.sons[0].kind in {tyInt..tyInt64,
                                                   tyUInt8..tyUInt32} and
                          a.n[0].intVal >= firstOrd(f) and
                          a.n[1].intVal <= lastOrd(f):
       result = isConvertible
     else: result = isNone
-    #elif f.kind == tyInt and k in {tyInt..tyInt32}: result = isIntConv
-    #elif f.kind == tyUInt and k in {tyUInt..tyUInt32}: result = isIntConv
 
 proc isConvertibleToRange(f, a: PType): bool =
   # be less picky for tyRange, as that it is used for array indexing:
@@ -783,16 +794,16 @@ proc typeRel(c: var TCandidate, f, aOrig: PType, doBind = true): TTypeRelation =
         result = isIntConv
       elif isConvertibleToRange(skipTypes(f, {tyRange}), a):
         result = isConvertible  # a convertible to f
-  of tyInt:      result = handleRange(f, a, tyInt8, tyInt32)
-  of tyInt8:     result = handleRange(f, a, tyInt8, tyInt8)
-  of tyInt16:    result = handleRange(f, a, tyInt8, tyInt16)
-  of tyInt32:    result = handleRange(f, a, tyInt8, tyInt32)
-  of tyInt64:    result = handleRange(f, a, tyInt, tyInt64)
-  of tyUInt:     result = handleRange(f, a, tyUInt8, tyUInt32)
-  of tyUInt8:    result = handleRange(f, a, tyUInt8, tyUInt8)
-  of tyUInt16:   result = handleRange(f, a, tyUInt8, tyUInt16)
-  of tyUInt32:   result = handleRange(f, a, tyUInt8, tyUInt32)
-  of tyUInt64:   result = handleRange(f, a, tyUInt, tyUInt64)
+  of tyInt:      result = handleRange(f, a, {tyInt8..tyInt32, tyUInt8, tyUInt16})
+  of tyInt8:     result = handleRange(f, a, {tyInt8..tyInt8})
+  of tyInt16:    result = handleRange(f, a, {tyInt8..tyInt16, tyUInt8})
+  of tyInt32:    result = handleRange(f, a, {tyInt8..tyInt32, tyUInt8, tyUInt16})
+  of tyInt64:    result = handleRange(f, a, {tyInt..tyInt64, tyUInt8, tyUInt16, tyUInt32})
+  of tyUInt:     result = handleRange(f, a, {tyUInt8..tyUInt32})
+  of tyUInt8:    result = handleRange(f, a, {tyUInt8..tyUInt8})
+  of tyUInt16:   result = handleRange(f, a, {tyUInt8..tyUInt16})
+  of tyUInt32:   result = handleRange(f, a, {tyUInt8..tyUInt32})
+  of tyUInt64:   result = handleRange(f, a, {tyUInt..tyUInt64})
   of tyFloat:    result = handleFloatRange(f, a)
   of tyFloat32:  result = handleFloatRange(f, a)
   of tyFloat64:  result = handleFloatRange(f, a)
@@ -1066,7 +1077,7 @@ proc typeRel(c: var TCandidate, f, aOrig: PType, doBind = true): TTypeRelation =
         # 'or' implies maximum matching result:
         if x > result: result = x
       if result >= isSubtype:
-        if result > isGeneric: result = isGeneric
+        #if result > isGeneric: result = isGeneric
         bindingRet result
       else:
         result = isNone
@@ -1338,7 +1349,7 @@ proc localConvMatch(c: PContext, m: var TCandidate, f, a: PType,
 
 proc incMatches(m: var TCandidate; r: TTypeRelation; convMatch = 1) =
   case r
-  of isConvertible, isIntConv: inc(m.convMatches, convMatch)
+  of isConvertible, isIntConv7..isIntConv: inc(m.convMatches, convMatch)
   of isSubtype, isSubrange: inc(m.subtypeMatches)
   of isGeneric, isInferred, isBothMetaConvertible: inc(m.genericMatches)
   of isFromIntLit: inc(m.intConvMatches, 256)
@@ -1423,10 +1434,10 @@ proc paramTypesMatchAux(m: var TCandidate, f, argType: PType,
   of isConvertible:
     inc(m.convMatches)
     result = implicitConv(nkHiddenStdConv, f, arg, m, c)
-  of isIntConv:
+  of isIntConv7..isIntConv:
     # I'm too lazy to introduce another ``*matches`` field, so we conflate
     # ``isIntConv`` and ``isIntLit`` here:
-    inc(m.intConvMatches)
+    inc(m.intConvMatches, ((isIntConv.ord - r.ord) shl 4) + 1)
     result = implicitConv(nkHiddenStdConv, f, arg, m, c)
   of isSubtype:
     inc(m.subtypeMatches)
@@ -1470,7 +1481,7 @@ proc paramTypesMatchAux(m: var TCandidate, f, argType: PType,
   of isFromIntLit:
     # too lazy to introduce another ``*matches`` field, so we conflate
     # ``isIntConv`` and ``isIntLit`` here:
-    inc(m.intConvMatches, 256)
+    inc(m.intConvMatches, 1024)
     result = implicitConv(nkHiddenStdConv, f, arg, m, c)
   of isEqual:
     inc(m.exactMatches)
@@ -1817,6 +1828,9 @@ proc matches*(c: PContext, n, nOrig: PNode, m: var TCandidate) =
           def = implicitConv(nkHiddenStdConv, formal.typ, def, m, c)
         setSon(m.call, formal.position + 1, def)
     inc(f)
+  if n.info ?? "temp.nim":
+    echo m.callee.typeToString
+    writeMatches(m)
 
 proc argtypeMatches*(c: PContext, f, a: PType): bool =
   var m: TCandidate
