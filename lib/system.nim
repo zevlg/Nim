@@ -778,68 +778,25 @@ when not defined(JS):
     ## last 32 bits from `x`.
 
 # integer calculations:
-proc `+` *(x: int): int {.magic: "UnaryPlusI", noSideEffect.}
-proc `+` *(x: int8): int8 {.magic: "UnaryPlusI", noSideEffect.}
-proc `+` *(x: int16): int16 {.magic: "UnaryPlusI", noSideEffect.}
-proc `+` *(x: int32): int32 {.magic: "UnaryPlusI", noSideEffect.}
-proc `+` *(x: int64): int64 {.magic: "UnaryPlusI", noSideEffect.}
+proc `+` *[T: SomeSignedInt](x: T): T {.magic: "UnaryPlusI", noSideEffect.}
   ## Unary `+` operator for an integer. Has no effect.
 
-proc `-` *(x: int): int {.magic: "UnaryMinusI", noSideEffect.}
-proc `-` *(x: int8): int8 {.magic: "UnaryMinusI", noSideEffect.}
-proc `-` *(x: int16): int16 {.magic: "UnaryMinusI", noSideEffect.}
-proc `-` *(x: int32): int32 {.magic: "UnaryMinusI", noSideEffect.}
-proc `-` *(x: int64): int64 {.magic: "UnaryMinusI64", noSideEffect.}
+proc `-` *[T: SomeSignedInt](x: T): T {.magic: "UnaryMinusI", noSideEffect.}
   ## Unary `-` operator for an integer. Negates `x`.
 
-proc `not` *(x: int): int {.magic: "BitnotI", noSideEffect.}
-proc `not` *(x: int8): int8 {.magic: "BitnotI", noSideEffect.}
-proc `not` *(x: int16): int16 {.magic: "BitnotI", noSideEffect.}
-proc `not` *(x: int32): int32 {.magic: "BitnotI", noSideEffect.}
+proc `not` *[T: SomeSignedInt](x: T): T {.magic: "BitnotI", noSideEffect.}
   ## computes the `bitwise complement` of the integer `x`.
 
-when defined(nimnomagic64):
-  proc `not` *(x: int64): int64 {.magic: "BitnotI", noSideEffect.}
-else:
-  proc `not` *(x: int64): int64 {.magic: "BitnotI64", noSideEffect.}
-
-proc `+` *(x, y: int): int {.magic: "AddI", noSideEffect.}
-proc `+` *(x, y: int8): int8 {.magic: "AddI", noSideEffect.}
-proc `+` *(x, y: int16): int16 {.magic: "AddI", noSideEffect.}
-proc `+` *(x, y: int32): int32 {.magic: "AddI", noSideEffect.}
+proc `+` *[T: SomeSignedInt](x, y: T): T {.magic: "AddI", noSideEffect.}
   ## Binary `+` operator for an integer.
 
-when defined(nimnomagic64):
-  proc `+` *(x, y: int64): int64 {.magic: "AddI", noSideEffect.}
-else:
-  proc `+` *(x, y: int64): int64 {.magic: "AddI64", noSideEffect.}
-
-proc `-` *(x, y: int): int {.magic: "SubI", noSideEffect.}
-proc `-` *(x, y: int8): int8 {.magic: "SubI", noSideEffect.}
-proc `-` *(x, y: int16): int16 {.magic: "SubI", noSideEffect.}
-proc `-` *(x, y: int32): int32 {.magic: "SubI", noSideEffect.}
+proc `-` *[T: SomeSignedInt](x, y: T): T {.magic: "SubI", noSideEffect.}
   ## Binary `-` operator for an integer.
 
-when defined(nimnomagic64):
-  proc `-` *(x, y: int64): int64 {.magic: "SubI", noSideEffect.}
-else:
-  proc `-` *(x, y: int64): int64 {.magic: "SubI64", noSideEffect.}
-
-proc `*` *(x, y: int): int {.magic: "MulI", noSideEffect.}
-proc `*` *(x, y: int8): int8 {.magic: "MulI", noSideEffect.}
-proc `*` *(x, y: int16): int16 {.magic: "MulI", noSideEffect.}
-proc `*` *(x, y: int32): int32 {.magic: "MulI", noSideEffect.}
+proc `*` *[T: SomeSignedInt](x, y: T): T {.magic: "MulI", noSideEffect.}
   ## Binary `*` operator for an integer.
 
-when defined(nimnomagic64):
-  proc `*` *(x, y: int64): int64 {.magic: "MulI", noSideEffect.}
-else:
-  proc `*` *(x, y: int64): int64 {.magic: "MulI64", noSideEffect.}
-
-proc `div` *(x, y: int): int {.magic: "DivI", noSideEffect.}
-proc `div` *(x, y: int8): int8 {.magic: "DivI", noSideEffect.}
-proc `div` *(x, y: int16): int16 {.magic: "DivI", noSideEffect.}
-proc `div` *(x, y: int32): int32 {.magic: "DivI", noSideEffect.}
+proc `div` *[T: SomeSignedInt](x, y: T): T {.magic: "DivI", noSideEffect.}
   ## computes the integer division. This is roughly the same as
   ## ``floor(x/y)``.
   ##
@@ -849,26 +806,13 @@ proc `div` *(x, y: int32): int32 {.magic: "DivI", noSideEffect.}
   ##   3 div 2 == 1
   ##   7 div 5 == 1
 
-when defined(nimnomagic64):
-  proc `div` *(x, y: int64): int64 {.magic: "DivI", noSideEffect.}
-else:
-  proc `div` *(x, y: int64): int64 {.magic: "DivI64", noSideEffect.}
-
-proc `mod` *(x, y: int): int {.magic: "ModI", noSideEffect.}
-proc `mod` *(x, y: int8): int8 {.magic: "ModI", noSideEffect.}
-proc `mod` *(x, y: int16): int16 {.magic: "ModI", noSideEffect.}
-proc `mod` *(x, y: int32): int32 {.magic: "ModI", noSideEffect.}
+proc `mod` *[T: SomeSignedInt](x, y: T): T {.magic: "ModI", noSideEffect.}
   ## computes the integer modulo operation (remainder).
   ## This is the same as
   ## ``x - (x div y) * y``.
   ##
   ## .. code-block:: Nim
   ##   (7 mod 5) == 2
-
-when defined(nimnomagic64):
-  proc `mod` *(x, y: int64): int64 {.magic: "ModI", noSideEffect.}
-else:
-  proc `mod` *(x, y: int64): int64 {.magic: "ModI64", noSideEffect.}
 
 proc `shr` *(x: int, y: SomeInteger): int {.magic: "ShrI", noSideEffect.}
 proc `shr` *(x: int8, y: SomeInteger): int8 {.magic: "ShrI", noSideEffect.}
@@ -894,31 +838,19 @@ proc `shl` *(x: int64, y: SomeInteger): int64 {.magic: "ShlI", noSideEffect.}
   ##  1'i32 shl 4 == 0x0000_0010
   ##  1'i64 shl 4 == 0x0000_0000_0000_0010
 
-proc `and` *(x, y: int): int {.magic: "BitandI", noSideEffect.}
-proc `and` *(x, y: int8): int8 {.magic: "BitandI", noSideEffect.}
-proc `and` *(x, y: int16): int16 {.magic: "BitandI", noSideEffect.}
-proc `and` *(x, y: int32): int32 {.magic: "BitandI", noSideEffect.}
-proc `and` *(x, y: int64): int64 {.magic: "BitandI", noSideEffect.}
+proc `and` *[T: SomeSignedInt](x, y: T): T {.magic: "BitandI", noSideEffect.}
   ## computes the `bitwise and` of numbers `x` and `y`.
   ##
   ## .. code-block:: Nim
   ##  (0xffff'i16 and 0x0010'i16) == 0x0010
 
-proc `or` *(x, y: int): int {.magic: "BitorI", noSideEffect.}
-proc `or` *(x, y: int8): int8 {.magic: "BitorI", noSideEffect.}
-proc `or` *(x, y: int16): int16 {.magic: "BitorI", noSideEffect.}
-proc `or` *(x, y: int32): int32 {.magic: "BitorI", noSideEffect.}
-proc `or` *(x, y: int64): int64 {.magic: "BitorI", noSideEffect.}
+proc `or` *[T: SomeSignedInt](x, y: T): T {.magic: "BitorI", noSideEffect.}
   ## computes the `bitwise or` of numbers `x` and `y`.
   ##
   ## .. code-block:: Nim
   ##  (0x0005'i16 or 0x0010'i16) == 0x0015
 
-proc `xor` *(x, y: int): int {.magic: "BitxorI", noSideEffect.}
-proc `xor` *(x, y: int8): int8 {.magic: "BitxorI", noSideEffect.}
-proc `xor` *(x, y: int16): int16 {.magic: "BitxorI", noSideEffect.}
-proc `xor` *(x, y: int32): int32 {.magic: "BitxorI", noSideEffect.}
-proc `xor` *(x, y: int64): int64 {.magic: "BitxorI", noSideEffect.}
+proc `xor` *[T: SomeSignedInt](x, y: T): T {.magic: "BitxorI", noSideEffect.}
   ## computes the `bitwise xor` of numbers `x` and `y`.
   ##
   ## .. code-block:: Nim
@@ -989,57 +921,57 @@ proc `<%` *(x, y: int64): bool {.magic: "LtU64", noSideEffect.}
   ## treats `x` and `y` as unsigned and compares them.
   ## Returns true iff ``unsigned(x) < unsigned(y)``.
 
-# unsigned integer operations:
-proc `not`*[T: SomeUnsignedInt](x: T): T {.magic: "BitnotI", noSideEffect.}
-  ## computes the `bitwise complement` of the integer `x`.
+when defined(nimreworkedunsigned):
+  proc `not`*[T: SomeUnsignedInt](x: T): T {.magic: "BitnotI", noSideEffect.}
+    ## computes the `bitwise complement` of the integer `x`.
 
-proc `shr`*[T: SomeUnsignedInt](x: T, y: SomeInteger): T {.magic: "ShrI", noSideEffect.}
-  ## computes the `shift right` operation of `x` and `y`.
+  proc `shr`*[T: SomeUnsignedInt](x: T, y: SomeInteger): T {.magic: "ShrI", noSideEffect.}
+    ## computes the `shift right` operation of `x` and `y`.
 
-proc `shl`*[T: SomeUnsignedInt](x: T, y: SomeInteger): T {.magic: "ShlI", noSideEffect.}
-  ## computes the `shift left` operation of `x` and `y`.
+  proc `shl`*[T: SomeUnsignedInt](x: T, y: SomeInteger): T {.magic: "ShlI", noSideEffect.}
+    ## computes the `shift left` operation of `x` and `y`.
 
-proc `and`*[T: SomeUnsignedInt](x, y: T): T {.magic: "BitandI", noSideEffect.}
-  ## computes the `bitwise and` of numbers `x` and `y`.
+  proc `and`*[T: SomeUnsignedInt](x, y: T): T {.magic: "BitandI", noSideEffect.}
+    ## computes the `bitwise and` of numbers `x` and `y`.
 
-proc `or`*[T: SomeUnsignedInt](x, y: T): T {.magic: "BitorI", noSideEffect.}
-  ## computes the `bitwise or` of numbers `x` and `y`.
+  proc `or`*[T: SomeUnsignedInt](x, y: T): T {.magic: "BitorI", noSideEffect.}
+    ## computes the `bitwise or` of numbers `x` and `y`.
 
-proc `xor`*[T: SomeUnsignedInt](x, y: T): T {.magic: "BitxorI", noSideEffect.}
-  ## computes the `bitwise xor` of numbers `x` and `y`.
+  proc `xor`*[T: SomeUnsignedInt](x, y: T): T {.magic: "BitxorI", noSideEffect.}
+    ## computes the `bitwise xor` of numbers `x` and `y`.
 
-proc `==`*[T: SomeUnsignedInt](x, y: T): bool {.magic: "EqI", noSideEffect.}
-  ## Compares two unsigned integers for equality.
+  proc `==`*[T: SomeUnsignedInt](x, y: T): bool {.magic: "EqI", noSideEffect.}
+    ## Compares two unsigned integers for equality.
 
-proc `+`*[T: SomeUnsignedInt](x, y: T): T {.magic: "AddU", noSideEffect.}
-  ## Binary `+` operator for unsigned integers.
+  proc `+`*[T: SomeUnsignedInt](x, y: T): T {.magic: "AddU", noSideEffect.}
+    ## Binary `+` operator for unsigned integers.
 
-proc `-`*[T: SomeUnsignedInt](x, y: T): T {.magic: "SubU", noSideEffect.}
-  ## Binary `-` operator for unsigned integers.
+  proc `-`*[T: SomeUnsignedInt](x, y: T): T {.magic: "SubU", noSideEffect.}
+    ## Binary `-` operator for unsigned integers.
 
-proc `*`*[T: SomeUnsignedInt](x, y: T): T {.magic: "MulU", noSideEffect.}
-  ## Binary `*` operator for unsigned integers.
+  proc `*`*[T: SomeUnsignedInt](x, y: T): T {.magic: "MulU", noSideEffect.}
+    ## Binary `*` operator for unsigned integers.
 
-proc `div`*[T: SomeUnsignedInt](x, y: T): T {.magic: "DivU", noSideEffect.}
-  ## computes the integer division. This is roughly the same as
-  ## ``floor(x/y)``.
-  ##
-  ## .. code-block:: Nim
-  ##  (7 div 5) == 2
+  proc `div`*[T: SomeUnsignedInt](x, y: T): T {.magic: "DivU", noSideEffect.}
+    ## computes the integer division. This is roughly the same as
+    ## ``floor(x/y)``.
+    ##
+    ## .. code-block:: Nim
+    ##  (7 div 5) == 2
 
-proc `mod`*[T: SomeUnsignedInt](x, y: T): T {.magic: "ModU", noSideEffect.}
-  ## computes the integer modulo operation (remainder).
-  ## This is the same as
-  ## ``x - (x div y) * y``.
-  ##
-  ## .. code-block:: Nim
-  ##   (7 mod 5) == 2
+  proc `mod`*[T: SomeUnsignedInt](x, y: T): T {.magic: "ModU", noSideEffect.}
+    ## computes the integer modulo operation (remainder).
+    ## This is the same as
+    ## ``x - (x div y) * y``.
+    ##
+    ## .. code-block:: Nim
+    ##   (7 mod 5) == 2
 
-proc `<=`*[T: SomeUnsignedInt](x, y: T): bool {.magic: "LeU", noSideEffect.}
-  ## Returns true iff ``x <= y``.
+  proc `<=`*[T: SomeUnsignedInt](x, y: T): bool {.magic: "LeU", noSideEffect.}
+    ## Returns true iff ``x <= y``.
 
-proc `<`*[T: SomeUnsignedInt](x, y: T): bool {.magic: "LtU", noSideEffect.}
-  ## Returns true iff ``unsigned(x) < unsigned(y)``.
+  proc `<`*[T: SomeUnsignedInt](x, y: T): bool {.magic: "LtU", noSideEffect.}
+    ## Returns true iff ``unsigned(x) < unsigned(y)``.
 
 # floating point operations:
 proc `+` *(x: float32): float32 {.magic: "UnaryPlusF64", noSideEffect.}
