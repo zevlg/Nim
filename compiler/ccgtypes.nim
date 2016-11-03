@@ -37,7 +37,8 @@ proc hashOwner(s: PSym): SigHash =
   result = gDebugInfo.register(p.name.s, m.name.s)
 
 proc idOrSig(m: BModule; s: PSym): BiggestInt =
-  if s.kind in routineKinds and s.typ != nil and sfExported in s.flags:
+  if s.kind in routineKinds and s.typ != nil and sfExported in s.flags and
+     s.typ.callConv != ccInline:
     # signatures for exported routines are reliable enough to
     # produce a unique name and this means produced C++ is more stable wrt
     # Nim changes:
