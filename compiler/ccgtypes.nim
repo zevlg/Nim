@@ -1,7 +1,7 @@
 #
 #
 #           The Nim Compiler
-#        (c) Copyright 2016 Andreas Rumpf
+#        (c) Copyright 2017 Andreas Rumpf
 #
 #    See the file "copying.txt", included in this
 #    distribution, for details about the copyright.
@@ -116,15 +116,17 @@ proc mangleName(m: BModule; s: PSym): Rope =
       add(result, m.idOrSig(s))
     s.loc.r = result
 
-proc typeName(typ: PType): Rope =
-  result = if typ.sym != nil and typ.kind in {tyObject, tyEnum}:
-             typ.sym.name.s.mangle.rope
-           else:
-             ~"TY"
 
 const
   irrelevantForBackend = {tyGenericBody, tyGenericInst, tyGenericInvocation,
                           tyDistinct, tyRange, tyStatic, tyAlias}
+
+proc typeName(typ: PType): Rope =
+  let typ = typ.skipTypes(irrelevantForBackend)
+  result = if typ.sym != nil and typ.kind in {tyObject, tyEnum}:
+             typ.sym.name.s.mangle.rope
+           else:
+             ~"TY"
 
 proc getTypeName(m: BModule; typ: PType; sig: SigHash): Rope =
   var t = typ

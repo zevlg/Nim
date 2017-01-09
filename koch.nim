@@ -1,7 +1,7 @@
 #
 #
 #         Maintenance program for Nim
-#        (c) Copyright 2016 Andreas Rumpf
+#        (c) Copyright 2017 Andreas Rumpf
 #
 #    See the file "copying.txt", included in this
 #    distribution, for details about the copyright.
@@ -23,14 +23,14 @@ when defined(i386) and defined(windows) and defined(vcc):
 import
   os, strutils, parseopt, osproc, streams
 
-const VersionAsString = system.NimVersion #"0.10.2"
+const VersionAsString = system.NimVersion
 
 const
   HelpText = """
 +-----------------------------------------------------------------+
 |         Maintenance program for Nim                             |
 |             Version $1|
-|             (c) 2016 Andreas Rumpf                              |
+|             (c) 2017 Andreas Rumpf                              |
 +-----------------------------------------------------------------+
 Build time: $2, $3
 
@@ -74,6 +74,14 @@ proc exe(f: string): string =
   result = addFileExt(f, ExeExt)
   when defined(windows):
     result = result.replace('/','\\')
+
+template withDir(dir, body) =
+  let old = getCurrentDir()
+  try:
+    setCurrentDir(dir)
+    body
+  finally:
+    setCurrentdir(old)
 
 proc findNim(): string =
   var nim = "nim".exe
@@ -131,7 +139,7 @@ proc testUnixInstall() =
       # check the docs build:
       execCleanPath("./koch web", destDir / "bin")
       # check nimble builds:
-      execCleanPath("./bin/nim e install_tools.nims")
+      execCleanPath("./koch tools")
       # check the tests work:
       execCleanPath("./koch tests", destDir / "bin")
     else:
@@ -162,13 +170,11 @@ proc csource(args: string) =
 proc bundleNimbleSrc() =
   ## bunldeNimbleSrc() bundles a specific Nimble commit with the tarball. We
   ## always bundle the latest official release.
-  if dirExists("dist/nimble/.git"):
-    exec("git --git-dir dist/nimble/.git pull")
-  else:
+  if not dirExists("dist/nimble/.git"):
     exec("git clone https://github.com/nim-lang/nimble.git dist/nimble")
-  let tags = execProcess("git --git-dir dist/nimble/.git tag -l v*").splitLines
-  let tag = tags[^1]
-  exec("git --git-dir dist/nimble/.git checkout " & tag)
+  withDir("dist/nimble"):
+    exec("git checkout -f stable")
+    exec("git pull")
 
 proc bundleNimbleExe() =
   bundleNimbleSrc()
@@ -177,21 +183,31 @@ proc bundleNimbleExe() =
   nimexec("c dist/nimble/src/nimble.nim")
   copyExe("dist/nimble/src/nimble".exe, "bin/nimble".exe)
 
-proc buildNimble() =
-  ## buildNimble() builds Nimble for the building via "github". As such, we
-  ## choose the most recent commit of Nimble too.
+proc buildNimble(latest: bool) =
+  # old installations created nim/nimblepkg/*.nim files. We remove these
+  # here so that it cannot cause problems (nimble bug #306):
+  if dirExists("bin/nimblepkg"):
+    removeDir("bin/nimblepkg")
+  # if koch is used for a tar.xz, build the dist/nimble we shipped
+  # with the tarball:
   var installDir = "dist/nimble"
-  if dirExists("dist/nimble/.git"):
-    exec("git --git-dir dist/nimble/.git pull")
+  if not latest and dirExists(installDir) and not dirExists("dist/nimble/.git"):
+    discard "don't do the git dance"
   else:
-    # if dist/nimble exist, but is not a git repo, don't mess with it:
-    if dirExists(installDir):
-      var id = 0
-      while dirExists("dist/nimble" & $id):
-        inc id
-      installDir = "dist/nimble" & $id
-    exec("git clone https://github.com/nim-lang/nimble.git " & installDir)
-  nimexec("c " & installDir / "src/nimble.nim")
+    if not dirExists("dist/nimble/.git"):
+      if dirExists(installDir):
+        var id = 0
+        while dirExists("dist/nimble" & $id):
+          inc id
+        installDir = "dist/nimble" & $id
+      exec("git clone https://github.com/nim-lang/nimble.git " & installDir)
+    withDir(installDir):
+      if latest:
+        exec("git checkout -f master")
+      else:
+        exec("git checkout -f stable")
+      exec("git pull")
+  nimexec("c --noNimblePath -p:compiler " & installDir / "src/nimble.nim")
   copyExe(installDir / "src/nimble".exe, "bin/nimble".exe)
 
 proc bundleNimsuggest(buildExe: bool) =
@@ -227,19 +243,14 @@ proc buildTool(toolname, args: string) =
   nimexec("cc $# $#" % [args, toolname])
   copyFile(dest="bin"/ splitFile(toolname).name.exe, source=toolname.exe)
 
-proc buildTools() =
+proc buildTools(latest: bool) =
   let nimsugExe = "bin/nimsuggest".exe
   nimexec "c --noNimblePath -p:compiler -d:release -o:" & nimsugExe &
       " tools/nimsuggest/nimsuggest.nim"
 
   let nimgrepExe = "bin/nimgrep".exe
   nimexec "c -o:" & nimgrepExe & " tools/nimgrep.nim"
-  if dirExists"dist/nimble":
-    let nimbleExe = "bin/nimble".exe
-    nimexec "c --noNimblePath -p:compiler -o:" & nimbleExe &
-        " dist/nimble/src/nimble.nim"
-  else:
-    buildNimble()
+  buildNimble(latest)
 
 proc nsis(args: string) =
   bundleNimbleExe()
@@ -477,8 +488,8 @@ of cmdArgument:
   of "test", "tests": tests(op.cmdLineRest)
   of "temp": temp(op.cmdLineRest)
   of "winrelease": winRelease()
-  of "nimble": buildNimble()
-  of "tools": buildTools()
+  of "nimble": buildNimble(existsDir(".git"))
+  of "tools": buildTools(existsDir(".git"))
   of "pushcsource", "pushcsources": pushCsources()
   else: showHelp()
 of cmdEnd: showHelp()

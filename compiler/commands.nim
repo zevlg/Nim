@@ -56,8 +56,8 @@ const
       "Copyright (c) 2006-" & CompileDate.substr(0, 3) & " by Andreas Rumpf\n"
 
 const
-  Usage = slurp"doc/basicopt.txt".replace("//", "")
-  AdvancedUsage = slurp"doc/advopt.txt".replace("//", "")
+  Usage = slurp"../doc/basicopt.txt".replace("//", "")
+  AdvancedUsage = slurp"../doc/advopt.txt".replace("//", "")
 
 proc getCommandLineDesc(): string =
   result = (HelpMessage % [VersionAsString, platform.OS[platform.hostOS].name,
@@ -331,10 +331,7 @@ proc processSwitch(switch, arg: string, pass: TCmdLinePass, info: TLineInfo) =
       nimblePath(path, info)
   of "nonimblepath", "nobabelpath":
     expectNoArg(switch, arg, pass, info)
-    options.gNoNimblePath = true
-    options.lazyPaths.head = nil
-    options.lazyPaths.tail = nil
-    options.lazyPaths.counter = 0
+    disableNimblePath()
   of "excludepath":
     expectArg(switch, arg, pass, info)
     let path = processPath(arg, info)
